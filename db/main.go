@@ -1,140 +1,68 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"strings"
 
 	rbt "github.com/emirpasic/gods/trees/redblacktree"
 )
 
-type Database struct {
-	// file     *os.File
-	dataFile string
-	index    map[string]int64
-	tree     *rbt.Tree
+type LogbasedDB struct {
+	dataFileName string
+	indexTree    *rbt.Tree
 }
 
 func main() {
-	memo := make(map[string]int64)
 	_, err := os.Create("data.txt")
 	if err != nil {
 		log.Fatal("Error creating file: ", err)
 	}
-	db := Database{"data.txt", memo, rbt.NewWithStringComparator()}
+	db := LogbasedDB{"data.txt", rbt.NewWithStringComparator()}
 
-	db.writeKeyValueToTree("aaa", "value1")
-	db.writeKeyValueToTree("ccc", "value2")
-	db.writeKeyValueToTree("calisthenicsKing", "owo")
+	db.writeKeyValue("aaa", "value1")
+	db.getKeyValue("aaa")
 
+	db.writeKeyValue("ccc", "value2")
+
+	db.writeKeyValue("calisthenicsKing", "owo")
+	db.getStateOfTree()
 }
 
-func (db *Database) writeKeyValue(key, value string) {
-	file, err := os.OpenFile(db.dataFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal("There was an error opening the file: ", err)
-	}
+func (db *LogbasedDB) writeKeyValue(key, value string) {
+	indexTree := db.indexTree
+	indexTree.Put(key, value)
 
-	offset, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		log.Fatal("Error getting offset from file.")
-	}
-
-	str := fmt.Sprintf("%s=%s\n", key, value)
-	_, err = file.WriteString(str)
-	if err != nil {
-		log.Fatal("Something went wrong while writing to file.", err)
-	}
-
-	db.index[key] = offset
-}
-
-func (db *Database) writeKeyValueToTree(key, value string) {
-	tree := db.tree
-	tree.Put(key, value)
-
-	if tree.Size() == 2 {
+	if indexTree.Size() == 2 {
 		db.generateSegmentFileFromTree()
+		db.indexTree = rbt.NewWithStringComparator()
 	}
 }
 
-func (db *Database) getStateOfTree() {
-	fmt.Println(db.tree)
-}
-
-func (db *Database) getValue(key string) {
-	offset, exists := db.index[key]
-	if !exists {
-		log.Fatal("Key does not exist in db.")
-	}
-	fmt.Println("Offset to read value from: ", offset)
-
-	file, err := os.Open(db.dataFile)
-	if err != nil {
-		log.Fatal("There was an error opening the file: ", err)
-	}
-	defer file.Close()
-
-	// Seek moves the pointer (cursor), offset is how many bytes to move, and whence is where to start.
-	_, err = file.Seek(offset, io.SeekStart)
-	if err != nil {
-		log.Fatal("Error when seeking offset to read from.")
-	}
-
-	// Scanner is used to scan line by line, it starts the scanner at the cursor's location.
-	scanner := bufio.NewScanner(file)
-
-	scanner.Scan()
-
-	line := scanner.Text()
-	parts := strings.SplitN(line, "=", 2)
-
-	if len(parts) == 2 {
-		fmt.Println(parts[1])
+// TODO Add logic here to look into segment files if key is not found in memo.S
+func (db LogbasedDB) getKeyValue(key string) {
+	fmt.Println("Key to search for: ", key)
+	keyValue, found := db.indexTree.Get(key)
+	if found {
+		fmt.Println(keyValue)
 	} else {
-		log.Fatal("Parts weren't saved to database correctly.")
+		fmt.Println("The key wasn't found in the tree.")
 	}
+
 }
 
-// A segment is a batch.
-// TODO Add logic to call this when current file gets to 5MB or something like that.
-func (db *Database) generateSegmentFile() error {
-	src, err := os.Open(db.dataFile)
-	if err != nil {
-		log.Fatal("Error opening source file.")
-	}
-	defer src.Close()
-
-	dst, err := os.Create("segment.txt")
-	if err != nil {
-		log.Fatal("Error creating segment file.")
-	}
-	defer dst.Close()
-
-	scanner := bufio.NewScanner(src)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		_, err := dst.WriteString(line + "\n")
-		if err != nil {
-			return err
-		}
-	}
-	fmt.Println("Finished writing segment file.")
-	return scanner.Err()
+func (db *LogbasedDB) getStateOfTree() {
+	fmt.Println(db.indexTree)
 }
 
-func (db *Database) generateSegmentFileFromTree() {
+func (db *LogbasedDB) generateSegmentFileFromTree() {
 	dst, err := os.Create("segment.txt")
 	if err != nil {
 		log.Fatal("Error opening segment file to write to.")
 	}
 	defer dst.Close()
 
-	iterator := db.tree.Iterator()
+	iterator := db.indexTree.Iterator()
 	for iterator.Next() {
 		dst.WriteString(fmt.Sprintf("%s=%s\n", iterator.Key(), iterator.Value()))
 	}
