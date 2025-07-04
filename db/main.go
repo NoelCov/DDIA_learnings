@@ -44,7 +44,7 @@ func (db *LogbasedDB) writeKeyValue() {
 		log.Fatal("Error reading key input.")
 	}
 
-	fmt.Print("\nEnter your value: ")
+	fmt.Print("Enter your value: ")
 	value, err := reader.ReadString('\n')
 	if err != nil {
 		log.Fatal("Error reading value input.")
@@ -53,7 +53,7 @@ func (db *LogbasedDB) writeKeyValue() {
 	indexTree := db.indexTree
 	indexTree.Put(key, value)
 
-	fmt.Println("Value was inserted in database.")
+	fmt.Println("Value was inserted in database.\n")
 
 	if indexTree.Size() == 2 {
 		db.generateSegmentFileFromTree()
@@ -62,7 +62,6 @@ func (db *LogbasedDB) writeKeyValue() {
 
 }
 
-// TODO Add logic here to look into segment files if key is not found in memo.S
 func (db LogbasedDB) getKeyValue() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("\nEnter the key to search for: ")
@@ -71,14 +70,45 @@ func (db LogbasedDB) getKeyValue() {
 		log.Fatal("Error reading key input.")
 	}
 
-	fmt.Println("Key to search for: ", key)
 	keyValue, found := db.indexTree.Get(key)
 	if found {
-		fmt.Println(keyValue)
+		fmt.Println(keyValue.(string))
 	} else {
-		fmt.Println("The key wasn't found in the tree.")
-	}
+		fmt.Println("The key wasn't found in the tree. Looking into segment files")
 
+		segmentFile, err := os.Open("segment.txt")
+		if err != nil {
+			log.Fatal("Error opening segment file.")
+		}
+		defer segmentFile.Close()
+
+		lines := make([]string, 0)
+		scanner := bufio.NewScanner(segmentFile)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+
+		left, right := 0, len(lines)-1
+		fmt.Println(lines)
+		key = strings.TrimSpace(key)
+
+		for left <= right {
+			mid := (left-right)/2 + right
+			fmt.Println(mid)
+
+			parts := strings.Split(lines[mid], "=")
+			currKey := parts[0]
+			if key == currKey {
+				fmt.Printf("\nValue for key '%s' is: %s\n\n", key, parts[1])
+				return
+			} else if key > currKey {
+				left = mid + 1
+			} else {
+				right = mid - 1
+			}
+		}
+		fmt.Println("\nKey doesn't exist.")
+	}
 }
 
 func (db *LogbasedDB) getStateOfTree() {
@@ -94,7 +124,7 @@ func (db *LogbasedDB) generateSegmentFileFromTree() {
 
 	iterator := db.indexTree.Iterator()
 	for iterator.Next() {
-		dst.WriteString(fmt.Sprintf("%s=%s\n", iterator.Key(), iterator.Value()))
+		dst.WriteString(fmt.Sprintf("%s=%s\n", strings.TrimSpace(iterator.Key().(string)), strings.TrimSpace(iterator.Value().(string))))
 	}
 	fmt.Println("Segment file was created.")
 }
