@@ -5,22 +5,21 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	rbt "github.com/emirpasic/gods/trees/redblacktree"
 )
 
 type LogbasedDB struct {
-	dataFileName string
-	indexTree    *rbt.Tree
+	segmentFileName  string
+	segmentsFileName string
+	indexTree        *rbt.Tree
 }
 
 func main() {
-	_, err := os.Create("data.txt")
-	if err != nil {
-		log.Fatal("Error creating file: ", err)
-	}
-	db := LogbasedDB{"data.txt", rbt.NewWithStringComparator()}
+	db := LogbasedDB{"", "segments.manifest", rbt.NewWithStringComparator()}
+	db.init()
 
 	for {
 		selection := getMenuSelection()
@@ -57,7 +56,6 @@ func (db *LogbasedDB) writeKeyValue() {
 
 	if indexTree.Size() == 2 {
 		db.generateSegmentFileFromTree()
-		db.indexTree = rbt.NewWithStringComparator()
 	}
 
 }
@@ -76,38 +74,40 @@ func (db LogbasedDB) getKeyValue() {
 	} else {
 		fmt.Println("The key wasn't found in the tree. Looking into segment files")
 
-		segmentFile, err := os.Open("segment.txt")
-		if err != nil {
-			log.Fatal("Error opening segment file.")
-		}
-		defer segmentFile.Close()
-
-		lines := make([]string, 0)
-		scanner := bufio.NewScanner(segmentFile)
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
-		}
-
-		left, right := 0, len(lines)-1
-		fmt.Println(lines)
-		key = strings.TrimSpace(key)
-
-		for left <= right {
-			mid := (left-right)/2 + right
-			fmt.Println(mid)
-
-			parts := strings.Split(lines[mid], "=")
-			currKey := parts[0]
-			if key == currKey {
-				fmt.Printf("\nValue for key '%s' is: %s\n\n", key, parts[1])
-				return
-			} else if key > currKey {
-				left = mid + 1
-			} else {
-				right = mid - 1
+		segmentFileNames := db.getSegmentFileNames()
+		for i := 0; i < len(segmentFileNames); i++ {
+			segmentFile, err := os.Open("segments/" + segmentFileNames[i] + ".txt")
+			if err != nil {
+				fmt.Printf("Error opening segment file '%s': %s", segmentFileNames[i], err)
 			}
+			defer segmentFile.Close()
+
+			lines := make([]string, 0)
+			scanner := bufio.NewScanner(segmentFile)
+			for scanner.Scan() {
+				lines = append(lines, scanner.Text())
+			}
+
+			left, right := 0, len(lines)-1
+			fmt.Println(lines)
+			key = strings.TrimSpace(key)
+
+			for left <= right {
+				mid := (left-right)/2 + right
+
+				parts := strings.Split(lines[mid], "=")
+				currKey := parts[0]
+				if key == currKey {
+					fmt.Printf("\nValue for key '%s' is: %s\n\n", key, parts[1])
+					return
+				} else if key > currKey {
+					left = mid + 1
+				} else {
+					right = mid - 1
+				}
+			}
+			fmt.Println("\nKey doesn't exist.")
 		}
-		fmt.Println("\nKey doesn't exist.")
 	}
 }
 
@@ -116,9 +116,9 @@ func (db *LogbasedDB) getStateOfTree() {
 }
 
 func (db *LogbasedDB) generateSegmentFileFromTree() {
-	dst, err := os.Create("segment.txt")
+	dst, err := os.OpenFile("segments/"+db.segmentFileName+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatal("Error opening segment file to write to.")
+		log.Fatal("Error opening segment file to write to: ", err)
 	}
 	defer dst.Close()
 
@@ -126,10 +126,18 @@ func (db *LogbasedDB) generateSegmentFileFromTree() {
 	for iterator.Next() {
 		dst.WriteString(fmt.Sprintf("%s=%s\n", strings.TrimSpace(iterator.Key().(string)), strings.TrimSpace(iterator.Value().(string))))
 	}
-	fmt.Println("Segment file was created.")
+	db.indexTree = rbt.NewWithStringComparator()
+	parts := strings.Split(db.segmentFileName, "-")
+	sequenceNum, err := strconv.Atoi(parts[1])
+	if err != nil {
+		log.Fatal("Could not parse integer from sequence number of segment file.")
+	}
+	// Update the values for the next segment file to be written.
+	sequenceNum += 1
+	db.segmentFileName = "segment-" + strconv.Itoa(sequenceNum)
+	fmt.Println("Segment file was created.\n")
 }
 
-// TODO Make a menu struct for this
 func getMenuSelection() string {
 	fmt.Println("Select one of the options below:\n")
 
@@ -145,4 +153,61 @@ func getMenuSelection() string {
 		log.Fatal("Couldn't get menu selection.")
 	}
 	return strings.TrimSpace(selection)
+}
+
+// TODO be aware of how many times I'm adding logic to read from segments/ check if there is a way to do this easier.
+func (db *LogbasedDB) init() {
+	// Get the name of the manifest file and create it if not exists
+	segmentsFileName := db.segmentsFileName
+	_, err := os.Stat(segmentsFileName)
+	if os.IsNotExist(err) {
+		_, err := os.Create(segmentsFileName)
+		if err != nil {
+			log.Fatal("Could not create segments file: ", err)
+		}
+	}
+
+	segmentsFile, err := os.OpenFile(segmentsFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal("Error opening segments file: ", err)
+	}
+
+	// Scan segments file to see if there are any segments, if not create first one, otherwise read the name of the last one to use it
+	scanner := bufio.NewScanner(segmentsFile)
+	segments := make([]string, 0)
+	for scanner.Scan() {
+		segments = append(segments, scanner.Text())
+	}
+
+	segmentFileName := "segment-0001"
+	if len(segments) == 0 {
+		_, err := os.Create("segments/" + segmentFileName + ".txt")
+		if err != nil {
+			log.Fatal("Error creating segment file: ", err)
+		}
+		_, err = segmentsFile.WriteString(segmentFileName + "\n")
+		if err != nil {
+			log.Fatal("Could not write to segment file: ", err)
+		}
+		db.segmentFileName = segmentFileName
+	} else {
+		db.segmentFileName = segments[len(segments)-1]
+	}
+
+	fmt.Println("Database was initialized correctly.\n")
+}
+
+func (db *LogbasedDB) getSegmentFileNames() []string {
+	segmentsFile, err := os.Open(db.segmentsFileName)
+	if err != nil {
+		log.Fatal("Error opening segments manifest file: ", err)
+	}
+
+	// Scan segments file to see if there are any segments, if not create first one, otherwise read the name of the last one to use it
+	scanner := bufio.NewScanner(segmentsFile)
+	segments := make([]string, 0)
+	for scanner.Scan() {
+		segments = append(segments, scanner.Text())
+	}
+	return segments
 }
