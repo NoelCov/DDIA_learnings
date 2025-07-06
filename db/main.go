@@ -75,7 +75,8 @@ func (db LogbasedDB) getKeyValue() {
 		fmt.Println("The key wasn't found in the tree. Looking into segment files")
 
 		segmentFileNames := db.getSegmentFileNames()
-		for i := 0; i < len(segmentFileNames); i++ {
+		// Latest file should always be checked first, then second latest, etc. This is because we want to find the latest key/value pair that exists in case it was updated.
+		for i := len(segmentFileNames) - 1; i >= 0; i-- {
 			segmentFile, err := os.Open("segments/" + segmentFileNames[i] + ".txt")
 			if err != nil {
 				fmt.Printf("Error opening segment file '%s': %s", segmentFileNames[i], err)
@@ -106,8 +107,8 @@ func (db LogbasedDB) getKeyValue() {
 					right = mid - 1
 				}
 			}
-			fmt.Println("\nKey doesn't exist.")
 		}
+		fmt.Println("\nKey doesn't exist in db, searched all segment files.")
 	}
 }
 
