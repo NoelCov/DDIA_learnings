@@ -160,15 +160,7 @@ func getMenuSelection() string {
 func (db *LogbasedDB) init() {
 	// Get the name of the manifest file and create it if not exists
 	segmentsFileName := db.segmentsFileName
-	_, err := os.Stat(segmentsFileName)
-	if os.IsNotExist(err) {
-		_, err := os.Create(segmentsFileName)
-		if err != nil {
-			log.Fatal("Could not create segments file: ", err)
-		}
-	}
-
-	segmentsFile, err := os.OpenFile(segmentsFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	segmentsFile, err := os.OpenFile(segmentsFileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal("Error opening segments file: ", err)
 	}
@@ -179,9 +171,10 @@ func (db *LogbasedDB) init() {
 	for scanner.Scan() {
 		segments = append(segments, scanner.Text())
 	}
+	fmt.Println("Segments from segments file: ", len(segments))
 
-	segmentFileName := "segment-0001"
 	if len(segments) == 0 {
+		segmentFileName := "segment-0001"
 		_, err := os.Create("segments/" + segmentFileName + ".txt")
 		if err != nil {
 			log.Fatal("Error creating segment file: ", err)
@@ -194,7 +187,6 @@ func (db *LogbasedDB) init() {
 	} else {
 		db.segmentFileName = segments[len(segments)-1]
 	}
-
 	fmt.Println("Database was initialized correctly.\n")
 }
 
