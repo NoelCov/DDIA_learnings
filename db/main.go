@@ -27,10 +27,16 @@ func main() {
 			db.getKeyValue()
 		} else if selection == "2" {
 			db.writeKeyValue()
+
+			if len(db.getSegmentFileNames()) == 2 {
+				db.compactFiles()
+			}
 		} else if selection == "3" {
 			db.getStateOfTree()
 		} else if selection == "4" {
 			db.deleteKey()
+		} else if selection == "5" {
+			db.compactFiles()
 		} else {
 			return
 		}
@@ -165,7 +171,8 @@ func getMenuSelection() string {
 	fmt.Println("2 - Enter key/value pair in database.")
 	fmt.Println("3 - Look at state of database.")
 	fmt.Println("4 - Delete key in database.")
-	fmt.Println("5 - Quit application.")
+	fmt.Println("5 - Compact segments.")
+	fmt.Println("6 - Quit application.")
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("\nEnter your selection: ")
@@ -201,7 +208,7 @@ func (db *LogbasedDB) init() {
 			log.Fatal("\nCould not retrieve last segment number.")
 		}
 
-		db.segmentFileName = strconv.Itoa(lastSegmentNumber + 1)
+		db.segmentFileName = "segment-" + strconv.Itoa(lastSegmentNumber+1)
 	}
 	fmt.Println("Database was initialized correctly.")
 }
@@ -251,12 +258,65 @@ func (db *LogbasedDB) deleteKey() {
 			for scanner.Scan() {
 				text := scanner.Text()
 				if strings.Contains(text, key) {
-					fmt.Println("Found key in segment file to delete.")
-					segmentFile.WriteString("")
+					fmt.Println("Found key in segment file to delete. Added marker to delete it.")
+					segmentFile.WriteString(key + "=__TOMBSTONE__\n")
 					return
 				}
 			}
 		}
 	}
 	fmt.Println("\nKey was not found in db.")
+}
+
+func (db *LogbasedDB) compactFiles() {
+	keyValues := make(map[string]string)
+
+	readSegmentFile := func(fileName string) {
+		segmentFile, err := os.Open("segments/" + fileName + ".txt")
+		if err != nil {
+			log.Fatal("Error opening previously most recent sement file: ", err)
+		}
+		defer segmentFile.Close()
+
+		scanner := bufio.NewScanner(segmentFile)
+		for scanner.Scan() {
+			parts := strings.Split(scanner.Text(), "=")
+			key := parts[0]
+			value := parts[1]
+
+			if value == "__TOMBSTONE__" {
+				delete(keyValues, key)
+			} else {
+				keyValues[key] = value
+			}
+		}
+	}
+
+	segmentFiles := db.getSegmentFileNames()
+	prevRecentSegmentName := segmentFiles[len(segmentFiles)-2]
+	mostRecentSegmentName := segmentFiles[len(segmentFiles)-1]
+	// Never call this without knowing there are at least two segment files in disk.
+	readSegmentFile(prevRecentSegmentName)
+	readSegmentFile(mostRecentSegmentName)
+
+	// Delete the two files!
+	// Should I enforce the creation of new segment file, then just rename it? Yah
+	dst, err := os.OpenFile("segments/compactedSegment.txt", os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatal("Error creating compacted segment file: ", err)
+	}
+
+	for k, v := range keyValues {
+		dst.WriteString(fmt.Sprintf("%s=%s\n", k, v))
+	}
+
+	for _, segment := range []string{prevRecentSegmentName, mostRecentSegmentName} {
+		os.Chdir("segments")
+		err := os.Remove(segment + ".txt")
+		if err != nil {
+			log.Fatal("Error removing segment: ", err)
+		}
+	}
+	// I should also update the segments.manifest file here.
+	os.Rename("compactedSegment.txt", prevRecentSegmentName+".txt")
 }
