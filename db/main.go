@@ -12,9 +12,9 @@ import (
 )
 
 type LogbasedDB struct {
-	segmentFileName  string
-	segmentsFileName string
-	indexTree        *rbt.Tree
+	segmentFileName          string
+	segmentsManifestFileName string
+	indexTree                *rbt.Tree
 }
 
 func main() {
@@ -186,8 +186,8 @@ func getMenuSelection() string {
 // TODO be aware of how many times I'm adding logic to read from segments/ check if there is a way to do this easier.
 func (db *LogbasedDB) init() {
 	// Get the name of the manifest file and create it if not exists
-	segmentsFileName := db.segmentsFileName
-	segmentsFile, err := os.OpenFile(segmentsFileName, os.O_RDWR|os.O_CREATE, 0644)
+	segmentsManifestFileName := db.segmentsManifestFileName
+	segmentsFile, err := os.OpenFile(segmentsManifestFileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal("Error opening segments file: ", err)
 	}
@@ -214,7 +214,7 @@ func (db *LogbasedDB) init() {
 }
 
 func (db *LogbasedDB) getSegmentFileNames() []string {
-	segmentsFile, err := os.Open(db.segmentsFileName)
+	segmentsFile, err := os.Open(db.segmentsManifestFileName)
 	if err != nil {
 		log.Fatal("Error opening segments manifest file: ", err)
 	}
@@ -246,9 +246,9 @@ func (db *LogbasedDB) deleteKey() {
 		return
 	} else {
 		fmt.Println("\nKey wasn't found in memtable, looking in segment files.")
-		segmentsFileNames := db.getSegmentFileNames()
-		for i := len(segmentsFileNames) - 1; i >= 0; i-- {
-			segmentFile, err := os.OpenFile("segments/"+segmentsFileNames[i]+".txt", os.O_RDWR, 0644)
+		segmentsManifestFileNames := db.getSegmentFileNames()
+		for i := len(segmentsManifestFileNames) - 1; i >= 0; i-- {
+			segmentFile, err := os.OpenFile("segments/"+segmentsManifestFileNames[i]+".txt", os.O_RDWR, 0644)
 			if err != nil {
 				log.Fatal("Error opening segment file: ", err)
 			}
@@ -295,12 +295,9 @@ func (db *LogbasedDB) compactFiles() {
 	segmentFiles := db.getSegmentFileNames()
 	prevRecentSegmentName := segmentFiles[len(segmentFiles)-2]
 	mostRecentSegmentName := segmentFiles[len(segmentFiles)-1]
-	// Never call this without knowing there are at least two segment files in disk.
 	readSegmentFile(prevRecentSegmentName)
 	readSegmentFile(mostRecentSegmentName)
 
-	// Delete the two files!
-	// Should I enforce the creation of new segment file, then just rename it? Yah
 	dst, err := os.OpenFile("segments/compactedSegment.txt", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal("Error creating compacted segment file: ", err)
@@ -311,12 +308,21 @@ func (db *LogbasedDB) compactFiles() {
 	}
 
 	for _, segment := range []string{prevRecentSegmentName, mostRecentSegmentName} {
-		os.Chdir("segments")
-		err := os.Remove(segment + ".txt")
+		err := os.Remove("segments/" + segment + ".txt")
 		if err != nil {
 			log.Fatal("Error removing segment: ", err)
 		}
 	}
-	// I should also update the segments.manifest file here.
-	os.Rename("compactedSegment.txt", prevRecentSegmentName+".txt")
+	os.Rename("segments/"+"compactedSegment.txt", "segments/"+prevRecentSegmentName+".txt")
+
+	tempManifestFileName := "newManifest.manifest"
+	newManifest, err := os.OpenFile(tempManifestFileName, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatal("Error creating new manifest file: ", err)
+	}
+
+	newManifest.WriteString(prevRecentSegmentName + "\n")
+	os.Remove(db.segmentFileName)
+	os.Rename(tempManifestFileName, db.segmentsManifestFileName)
+	fmt.Println("\nCompacted segments and created new manifest file successfully.")
 }
